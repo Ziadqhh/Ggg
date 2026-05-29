@@ -1,0 +1,6 @@
+{
+  "name": "Maestro Music",
+  "description": "A premium music explorer and player with smart capabilities, multi-platform search, and multiple quality downloaders.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
