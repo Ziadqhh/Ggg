@@ -10,6 +10,9 @@ import com.example.data.local.PlaylistEntity
 import com.example.data.model.Song
 import com.example.data.repository.MusicRepository
 import com.example.playback.PlaybackManager
+import com.spotify.android.appremote.api.ConnectionParams
+import com.spotify.android.appremote.api.Connector
+import com.spotify.android.appremote.api.SpotifyAppRemote
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.*
@@ -24,6 +27,129 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     private val TAG = "MusicViewModel"
     private val database = MusicDatabase.getDatabase(application)
     private val repository = MusicRepository(database.musicDao)
+
+    // --- Spotify App Remote SDK Integration persistent state ---
+    private val _spotifyIsConnected = MutableStateFlow(false)
+    val spotifyIsConnected = _spotifyIsConnected.asStateFlow()
+
+    private val _spotifyLogs = MutableStateFlow<List<String>>(listOf("System: Ready for Spotify App Remote SDK Integration"))
+    val spotifyLogs = _spotifyLogs.asStateFlow()
+
+    private val _spotifyActiveTrackName = MutableStateFlow("")
+    val spotifyActiveTrackName = _spotifyActiveTrackName.asStateFlow()
+
+    private val _spotifyActiveArtistName = MutableStateFlow("")
+    val spotifyActiveArtistName = _spotifyActiveArtistName.asStateFlow()
+
+    // Control parameters
+    var spotifyClientId = "ad0911afa57949bba362003f601876b2"
+    var spotifyRedirectUri = "https://com.spotify.android.spotifysdkkotlindemo/callback"
+    var spotifyPlaylistUri = "spotify:playlist:37i9dQZF1DX2sUQwD7tbmL"
+
+    var activeSpotifyRemote: SpotifyAppRemote? = null
+
+    fun addSpotifyLog(log: String) {
+        _spotifyLogs.value = _spotifyLogs.value + log
+    }
+
+    fun connectSpotifyRemote(context: android.content.Context) {
+        addSpotifyLog("connectionParams = ConnectionParams.Builder(clientId).setRedirectUri(redirectUri).showAuthView(true).build()")
+        val connectionParams = ConnectionParams.Builder(spotifyClientId)
+            .setRedirectUri(spotifyRedirectUri)
+            .showAuthView(true)
+            .build()
+
+        addSpotifyLog("SpotifyAppRemote.connect(this, connectionParams, ConnectionListener)")
+        SpotifyAppRemote.connect(context, connectionParams, object : Connector.ConnectionListener {
+            override fun onConnected(appRemote: SpotifyAppRemote) {
+                activeSpotifyRemote = appRemote
+                _spotifyIsConnected.value = true
+                addSpotifyLog("Connected! Yay! 🎉")
+
+                addSpotifyLog("playerApi.subscribeToPlayerState()")
+                appRemote.playerApi.subscribeToPlayerState().setEventCallback { state ->
+                    val track = state.track
+                    _spotifyActiveTrackName.value = track.name
+                    _spotifyActiveArtistName.value = track.artist.name
+                    addSpotifyLog("Track update received: ${track.name} by ${track.artist.name}")
+                }
+            }
+
+            override fun onFailure(throwable: Throwable) {
+                addSpotifyLog("Connection Error: ${throwable.localizedMessage}")
+                android.widget.Toast.makeText(context, throwable.localizedMessage, android.widget.Toast.LENGTH_LONG).show()
+                _spotifyIsConnected.value = false
+            }
+        })
+    }
+
+    fun disconnectSpotifyRemote(context: android.content.Context) {
+        activeSpotifyRemote?.let {
+            addSpotifyLog("SpotifyAppRemote.disconnect(appRemote)")
+            SpotifyAppRemote.disconnect(it)
+        }
+        activeSpotifyRemote = null
+        _spotifyIsConnected.value = false
+        _spotifyActiveTrackName.value = ""
+        _spotifyActiveArtistName.value = ""
+        addSpotifyLog("Disconnected gracefully.")
+        android.widget.Toast.makeText(context, "Disconnected Spotify App Remote", android.widget.Toast.LENGTH_SHORT).show()
+    }
+
+    fun playSpotifyUri(uri: String, context: android.content.Context) {
+        if (!_spotifyIsConnected.value) {
+            android.widget.Toast.makeText(context, "Please click 'Connect SDK' first to link Spotify App Remote!", android.widget.Toast.LENGTH_LONG).show()
+            return
+        }
+        activeSpotifyRemote?.playerApi?.play(uri) ?: run {
+            addSpotifyLog("Error: activeSpotifyRemote is null despite isConnected flag.")
+        }
+    }
+
+    private fun setupSpotifyRemoteListeners() {
+        SpotifyAppRemote.onPlayUriListener = { uri ->
+            val trackName = when (uri) {
+                "spotify:playlist:37i9dQZF1DX2sUQwD7tbmL" -> "Indie Feel Good Mix"
+                "spotify:playlist:37i9dQZF1DX7K31D69s4M1" -> "Serene Piano Resonance"
+                else -> "Spotify Premium Playlist"
+            }
+            val artistName = when (uri) {
+                "spotify:playlist:37i9dQZF1DX2sUQwD7tbmL" -> "Indie Artists"
+                "spotify:playlist:37i9dQZF1DX7K31D69s4M1" -> "Aura Keyboard Ensemble"
+                else -> "The Weeknd"
+            }
+
+            addSpotifyLog("playerApi.play(\"$uri\") invoked!")
+
+            val streamUrl = when (uri) {
+                "spotify:playlist:37i9dQZF1DX7K31D69s4M1" -> "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-2.mp3"
+                else -> "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3"
+            }
+
+            val spotifySong = Song(
+                id = "spotify_remote_stream",
+                title = trackName,
+                artist = artistName,
+                album = "Spotify App Remote",
+                duration = "3:20",
+                imageUrl = "https://images.unsplash.com/photo-1614613535308-eb5fbd3d2c17?auto=format&fit=crop&q=80&w=200",
+                platform = "Spotify",
+                streamUrl = streamUrl,
+                genre = "Premium Remote"
+            )
+
+            playSong(spotifySong, listOf(spotifySong))
+        }
+
+        SpotifyAppRemote.onConnectionStateListener = { connected ->
+            _spotifyIsConnected.value = connected
+            if (!connected) {
+                activeSpotifyRemote = null
+                _spotifyActiveTrackName.value = ""
+                _spotifyActiveArtistName.value = ""
+            }
+        }
+    }
 
     // UI state streams from Database
     val favoriteSongs: StateFlow<List<Song>> = repository.favoriteSongs
@@ -69,6 +195,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             // Initiate default local search
             performSearch("")
         }
+        setupSpotifyRemoteListeners()
     }
 
     private suspend fun seedSmartPlaylists() {
@@ -286,6 +413,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
 
     override fun onCleared() {
         super.onCleared()
-        // PlaybackManager persists across app cycles usually, but can release here if needed.
+        SpotifyAppRemote.onPlayUriListener = null
+        SpotifyAppRemote.onConnectionStateListener = null
     }
 }

@@ -1771,72 +1771,20 @@ private fun formatMs(ms: Int): String {
 @Composable
 fun SpotifyDeveloperPanel(viewModel: MusicViewModel, modifier: Modifier = Modifier) {
     val context = LocalContext.current
-    val coroutineScope = rememberCoroutineScope()
 
-    var isConnected by remember { mutableStateOf(false) }
-    val logs = remember { mutableStateListOf("System: Ready for Spotify App Remote SDK Integration") }
-    var spotifyAppRemote: SpotifyAppRemote? by remember { mutableStateOf(null) }
+    val isConnected by viewModel.spotifyIsConnected.collectAsStateWithLifecycle()
+    val logs by viewModel.spotifyLogs.collectAsStateWithLifecycle()
+    val activeTrackName by viewModel.spotifyActiveTrackName.collectAsStateWithLifecycle()
+    val activeArtistName by viewModel.spotifyActiveArtistName.collectAsStateWithLifecycle()
 
-    var clientId by remember { mutableStateOf("ad0911afa57949bba362003f601876b2") }
-    var redirectUri by remember { mutableStateOf("https://com.spotify.android.spotifysdkkotlindemo/callback") }
-    var playlistUri by remember { mutableStateOf("spotify:playlist:37i9dQZF1DX2sUQwD7tbmL") }
+    var clientId by remember { mutableStateOf(viewModel.spotifyClientId) }
+    var redirectUri by remember { mutableStateOf(viewModel.spotifyRedirectUri) }
+    var playlistUri by remember { mutableStateOf(viewModel.spotifyPlaylistUri) }
 
-    var activeTrackName by remember { mutableStateOf("") }
-    var activeArtistName by remember { mutableStateOf("") }
-
-    // Register active change listeners on the SDK Mock
-    DisposableEffect(Unit) {
-        val playListener: (String) -> Unit = { uri ->
-            val trackName = when (uri) {
-                "spotify:playlist:37i9dQZF1DX2sUQwD7tbmL" -> "Indie Feel Good Mix"
-                "spotify:playlist:37i9dQZF1DX7K31D69s4M1" -> "Serene Piano Resonance"
-                else -> "Spotify Premium Playlist"
-            }
-            val artistName = when (uri) {
-                "spotify:playlist:37i9dQZF1DX2sUQwD7tbmL" -> "Indie Artists"
-                "spotify:playlist:37i9dQZF1DX7K31D69s4M1" -> "Aura Keyboard Ensemble"
-                else -> "The Weeknd"
-            }
-
-            logs.add("playerApi.play(\"$uri\") invoked!")
-
-            // Trigger actual audio stream through central system so the user hears music in the app!
-            val streamUrl = when (uri) {
-                "spotify:playlist:37i9dQZF1DX7K31D69s4M1" -> "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-2.mp3"
-                else -> "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3"
-            }
-
-            val spotifySong = Song(
-                id = "spotify_remote_stream",
-                title = trackName,
-                artist = artistName,
-                album = "Spotify App Remote",
-                duration = "3:20",
-                imageUrl = "https://images.unsplash.com/photo-1614613535308-eb5fbd3d2c17?auto=format&fit=crop&q=80&w=200",
-                platform = "Spotify",
-                streamUrl = streamUrl,
-                genre = "Premium Remote"
-            )
-
-            viewModel.playSong(spotifySong, listOf(spotifySong))
-        }
-
-        val connListener: (Boolean) -> Unit = { connected ->
-            isConnected = connected
-            if (!connected) {
-                spotifyAppRemote = null
-                activeTrackName = ""
-                activeArtistName = ""
-            }
-        }
-
-        SpotifyAppRemote.onPlayUriListener = playListener
-        SpotifyAppRemote.onConnectionStateListener = connListener
-
-        onDispose {
-            SpotifyAppRemote.onPlayUriListener = null
-            SpotifyAppRemote.onConnectionStateListener = null
-        }
+    LaunchedEffect(clientId, redirectUri, playlistUri) {
+        viewModel.spotifyClientId = clientId
+        viewModel.spotifyRedirectUri = redirectUri
+        viewModel.spotifyPlaylistUri = playlistUri
     }
 
     Card(
@@ -1959,34 +1907,7 @@ fun SpotifyDeveloperPanel(viewModel: MusicViewModel, modifier: Modifier = Modifi
             ) {
                 Button(
                     onClick = {
-                        logs.add("connectionParams = ConnectionParams.Builder(clientId).setRedirectUri(redirectUri).showAuthView(true).build()")
-                        val connectionParams = ConnectionParams.Builder(clientId)
-                            .setRedirectUri(redirectUri)
-                            .showAuthView(true)
-                            .build()
-
-                        logs.add("SpotifyAppRemote.connect(this, connectionParams, ConnectionListener)")
-                        SpotifyAppRemote.connect(context, connectionParams, object : Connector.ConnectionListener {
-                            override fun onConnected(appRemote: SpotifyAppRemote) {
-                                spotifyAppRemote = appRemote
-                                isConnected = true
-                                logs.add("Connected! Yay! 🎉")
-
-                                // Subscribe to PlayerState as instructed by Spotify Quickstart
-                                logs.add("playerApi.subscribeToPlayerState()")
-                                appRemote.playerApi.subscribeToPlayerState().setEventCallback { state ->
-                                    val track = state.track
-                                    activeTrackName = track.name
-                                    activeArtistName = track.artist.name
-                                    logs.add("Track update received: ${track.name} by ${track.artist.name}")
-                                }
-                            }
-
-                            override fun onFailure(throwable: Throwable) {
-                                logs.add("Connection Error: ${throwable.localizedMessage}")
-                                Toast.makeText(context, throwable.localizedMessage, Toast.LENGTH_LONG).show()
-                            }
-                        })
+                        viewModel.connectSpotifyRemote(context)
                     },
                     modifier = Modifier.weight(1.3f),
                     colors = ButtonDefaults.buttonColors(
@@ -2002,13 +1923,7 @@ fun SpotifyDeveloperPanel(viewModel: MusicViewModel, modifier: Modifier = Modifi
 
                 Button(
                     onClick = {
-                        spotifyAppRemote?.let {
-                            logs.add("SpotifyAppRemote.disconnect(appRemote)")
-                            SpotifyAppRemote.disconnect(it)
-                            isConnected = false
-                            logs.add("Disconnected gracefully.")
-                            Toast.makeText(context, "Disconnected Spotify App Remote", Toast.LENGTH_SHORT).show()
-                        }
+                        viewModel.disconnectSpotifyRemote(context)
                     },
                     enabled = isConnected,
                     modifier = Modifier.weight(0.9f),
@@ -2064,11 +1979,7 @@ fun SpotifyDeveloperPanel(viewModel: MusicViewModel, modifier: Modifier = Modifi
 
                     IconButton(
                         onClick = {
-                            if (!isConnected) {
-                                Toast.makeText(context, "Please click 'Connect SDK' first to link Spotify App Remote!", Toast.LENGTH_LONG).show()
-                                return@IconButton
-                            }
-                            spotifyAppRemote?.playerApi?.play(playlistUri)
+                            viewModel.playSpotifyUri(playlistUri, context)
                         },
                         modifier = Modifier
                             .size(40.dp)
