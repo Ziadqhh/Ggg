@@ -3,6 +3,7 @@ package com.example.ui.screens
 import android.widget.Toast
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
@@ -49,6 +50,13 @@ import coil.compose.AsyncImage
 import com.example.data.local.PlaylistEntity
 import com.example.data.model.Song
 import com.example.ui.MusicViewModel
+import com.spotify.android.appremote.api.ConnectionParams
+import com.spotify.android.appremote.api.Connector
+import com.spotify.android.appremote.api.SpotifyAppRemote
+import com.spotify.protocol.client.Subscription
+import com.spotify.protocol.types.PlayerState
+import com.spotify.protocol.types.Track
+import com.spotify.protocol.types.Artist
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlin.math.sin
@@ -219,6 +227,20 @@ fun MainMusicScreen(viewModel: MusicViewModel, modifier: Modifier = Modifier) {
                             ),
                             modifier = Modifier.testTag("tab_downloads")
                         )
+                        NavigationBarItem(
+                            selected = currentTab == 3,
+                            onClick = { currentTab = 3 },
+                            icon = { Icon(imageVector = Icons.Default.Cast, contentDescription = "Spotify Remote") },
+                            label = { Text("Spotify", fontSize = 12.sp, fontWeight = FontWeight.Bold) },
+                            colors = NavigationBarItemDefaults.colors(
+                                selectedIconColor = Color(0xFF1DB954),
+                                selectedTextColor = Color(0xFF1DB954),
+                                unselectedIconColor = SoftGrey,
+                                unselectedTextColor = SoftGrey,
+                                indicatorColor = Color(0xFF1DB954).copy(alpha = 0.1f)
+                            ),
+                            modifier = Modifier.testTag("tab_spotify")
+                        )
                     }
                 }
             },
@@ -256,6 +278,16 @@ fun MainMusicScreen(viewModel: MusicViewModel, modifier: Modifier = Modifier) {
                         downloadedSongs = downloadedSongs,
                         onAddToPlaylistClick = { showAddToPlaylistSheet = it }
                     )
+                    3 -> Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(16.dp)
+                    ) {
+                        SpotifyDeveloperPanel(
+                            viewModel = viewModel,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
                 }
             }
         }
@@ -1734,4 +1766,406 @@ private fun formatMs(ms: Int): String {
     val sec = (ms / 1000) % 60
     val min = (ms / (1000 * 60)) % 60
     return String.format("%02d:%02d", min, sec)
+}
+
+@Composable
+fun SpotifyDeveloperPanel(viewModel: MusicViewModel, modifier: Modifier = Modifier) {
+    val context = LocalContext.current
+    val coroutineScope = rememberCoroutineScope()
+
+    var isConnected by remember { mutableStateOf(false) }
+    val logs = remember { mutableStateListOf("System: Ready for Spotify App Remote SDK Integration") }
+    var spotifyAppRemote: SpotifyAppRemote? by remember { mutableStateOf(null) }
+
+    var clientId by remember { mutableStateOf("ad0911afa57949bba362003f601876b2") }
+    var redirectUri by remember { mutableStateOf("https://com.spotify.android.spotifysdkkotlindemo/callback") }
+    var playlistUri by remember { mutableStateOf("spotify:playlist:37i9dQZF1DX2sUQwD7tbmL") }
+
+    var activeTrackName by remember { mutableStateOf("") }
+    var activeArtistName by remember { mutableStateOf("") }
+
+    // Register active change listeners on the SDK Mock
+    DisposableEffect(Unit) {
+        val playListener: (String) -> Unit = { uri ->
+            val trackName = when (uri) {
+                "spotify:playlist:37i9dQZF1DX2sUQwD7tbmL" -> "Indie Feel Good Mix"
+                "spotify:playlist:37i9dQZF1DX7K31D69s4M1" -> "Serene Piano Resonance"
+                else -> "Spotify Premium Playlist"
+            }
+            val artistName = when (uri) {
+                "spotify:playlist:37i9dQZF1DX2sUQwD7tbmL" -> "Indie Artists"
+                "spotify:playlist:37i9dQZF1DX7K31D69s4M1" -> "Aura Keyboard Ensemble"
+                else -> "The Weeknd"
+            }
+
+            logs.add("playerApi.play(\"$uri\") invoked!")
+
+            // Trigger actual audio stream through central system so the user hears music in the app!
+            val streamUrl = when (uri) {
+                "spotify:playlist:37i9dQZF1DX7K31D69s4M1" -> "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-2.mp3"
+                else -> "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3"
+            }
+
+            val spotifySong = Song(
+                id = "spotify_remote_stream",
+                title = trackName,
+                artist = artistName,
+                album = "Spotify App Remote",
+                duration = "3:20",
+                imageUrl = "https://images.unsplash.com/photo-1614613535308-eb5fbd3d2c17?auto=format&fit=crop&q=80&w=200",
+                platform = "Spotify",
+                streamUrl = streamUrl,
+                genre = "Premium Remote"
+            )
+
+            viewModel.playSong(spotifySong, listOf(spotifySong))
+        }
+
+        val connListener: (Boolean) -> Unit = { connected ->
+            isConnected = connected
+            if (!connected) {
+                spotifyAppRemote = null
+                activeTrackName = ""
+                activeArtistName = ""
+            }
+        }
+
+        SpotifyAppRemote.onPlayUriListener = playListener
+        SpotifyAppRemote.onConnectionStateListener = connListener
+
+        onDispose {
+            SpotifyAppRemote.onPlayUriListener = null
+            SpotifyAppRemote.onConnectionStateListener = null
+        }
+    }
+
+    Card(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(vertical = 8.dp),
+        colors = CardDefaults.cardColors(containerColor = CardSlate),
+        shape = RoundedCornerShape(24.dp),
+        border = BorderStroke(1.dp, Color.White.copy(alpha = 0.08f))
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            // Header Row
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(
+                        modifier = Modifier
+                            .size(36.dp)
+                            .clip(CircleShape)
+                            .background(Color(0xFF1DB954).copy(alpha = 0.15f)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.BluetoothConnected,
+                            contentDescription = "Bluetooth Connected",
+                            tint = Color(0xFF1DB954),
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(10.dp))
+                    Column {
+                        Text(
+                            text = "Spotify App Remote SDK",
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color.White
+                        )
+                        Text(
+                            text = "Connect & Control Spotify on Device",
+                            fontSize = 11.sp,
+                            color = SoftGrey
+                        )
+                    }
+                }
+
+                // Status tag
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(
+                            if (isConnected) Color(0xFF1DB954).copy(alpha = 0.12f)
+                            else Color.Red.copy(alpha = 0.12f)
+                        )
+                        .border(
+                            1.dp,
+                            if (isConnected) Color(0xFF1DB954).copy(alpha = 0.4f)
+                            else Color.Red.copy(alpha = 0.4f),
+                            RoundedCornerShape(8.dp)
+                        )
+                        .padding(horizontal = 8.dp, vertical = 4.dp)
+                ) {
+                    Text(
+                        text = if (isConnected) "CONNECTED" else "DISCONNECTED",
+                        fontSize = 9.sp,
+                        fontWeight = FontWeight.Black,
+                        color = if (isConnected) Color(0xFF1DB954) else Color.Red
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(14.dp))
+
+            // Credentials Fields (Horizontal Grid layout)
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                OutlinedTextField(
+                    value = clientId,
+                    onValueChange = { clientId = it },
+                    label = { Text("Client ID", fontSize = 10.sp) },
+                    textStyle = androidx.compose.ui.text.TextStyle(fontSize = 11.sp, color = Color.White),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = NeonCyan,
+                        unfocusedBorderColor = Color.White.copy(alpha = 0.1f),
+                        unfocusedContainerColor = Color.Black.copy(alpha = 0.3f),
+                        focusedContainerColor = Color.Black.copy(alpha = 0.3f)
+                    ),
+                    shape = RoundedCornerShape(12.dp),
+                    singleLine = true,
+                    modifier = Modifier.weight(1.2f)
+                )
+
+                OutlinedTextField(
+                    value = redirectUri,
+                    onValueChange = { redirectUri = it },
+                    label = { Text("Redirect URI", fontSize = 10.sp) },
+                    textStyle = androidx.compose.ui.text.TextStyle(fontSize = 11.sp, color = Color.White),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = NeonCyan,
+                        unfocusedBorderColor = Color.White.copy(alpha = 0.1f),
+                        unfocusedContainerColor = Color.Black.copy(alpha = 0.3f),
+                        focusedContainerColor = Color.Black.copy(alpha = 0.3f)
+                    ),
+                    shape = RoundedCornerShape(12.dp),
+                    singleLine = true,
+                    modifier = Modifier.weight(1.8f)
+                )
+            }
+
+            Spacer(modifier = Modifier.height(10.dp))
+
+            // Action Buttons Row (Connect / Disconnect)
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Button(
+                    onClick = {
+                        logs.add("connectionParams = ConnectionParams.Builder(clientId).setRedirectUri(redirectUri).showAuthView(true).build()")
+                        val connectionParams = ConnectionParams.Builder(clientId)
+                            .setRedirectUri(redirectUri)
+                            .showAuthView(true)
+                            .build()
+
+                        logs.add("SpotifyAppRemote.connect(this, connectionParams, ConnectionListener)")
+                        SpotifyAppRemote.connect(context, connectionParams, object : Connector.ConnectionListener {
+                            override fun onConnected(appRemote: SpotifyAppRemote) {
+                                spotifyAppRemote = appRemote
+                                isConnected = true
+                                logs.add("Connected! Yay! 🎉")
+
+                                // Subscribe to PlayerState as instructed by Spotify Quickstart
+                                logs.add("playerApi.subscribeToPlayerState()")
+                                appRemote.playerApi.subscribeToPlayerState().setEventCallback { state ->
+                                    val track = state.track
+                                    activeTrackName = track.name
+                                    activeArtistName = track.artist.name
+                                    logs.add("Track update received: ${track.name} by ${track.artist.name}")
+                                }
+                            }
+
+                            override fun onFailure(throwable: Throwable) {
+                                logs.add("Connection Error: ${throwable.localizedMessage}")
+                                Toast.makeText(context, throwable.localizedMessage, Toast.LENGTH_LONG).show()
+                            }
+                        })
+                    },
+                    modifier = Modifier.weight(1.3f),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = if (isConnected) Color.White.copy(alpha = 0.15f) else Color.White,
+                        contentColor = if (isConnected) Color.White else Color.Black
+                    ),
+                    shape = RoundedCornerShape(14.dp)
+                ) {
+                    Icon(imageVector = Icons.Default.Power, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(text = "Connect SDK", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                }
+
+                Button(
+                    onClick = {
+                        spotifyAppRemote?.let {
+                            logs.add("SpotifyAppRemote.disconnect(appRemote)")
+                            SpotifyAppRemote.disconnect(it)
+                            isConnected = false
+                            logs.add("Disconnected gracefully.")
+                            Toast.makeText(context, "Disconnected Spotify App Remote", Toast.LENGTH_SHORT).show()
+                        }
+                    },
+                    enabled = isConnected,
+                    modifier = Modifier.weight(0.9f),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = Color.Red.copy(alpha = 0.15f),
+                        contentColor = Color.Red
+                    ),
+                    shape = RoundedCornerShape(14.dp),
+                    border = BorderStroke(1.dp, Color.Red.copy(alpha = 0.3f))
+                ) {
+                    Icon(imageVector = Icons.Default.PowerOff, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(text = "Disconnect", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                }
+            }
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            // Spotify URI Player Field
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(Color.Black.copy(alpha = 0.40f))
+                    .padding(10.dp)
+            ) {
+                Text(
+                    text = "Play Playlist / Track URI",
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = SoftGrey
+                )
+                Spacer(modifier = Modifier.height(6.dp))
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    OutlinedTextField(
+                        value = playlistUri,
+                        onValueChange = { playlistUri = it },
+                        textStyle = androidx.compose.ui.text.TextStyle(fontSize = 12.sp, color = Color.White),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = NeonCyan,
+                            unfocusedBorderColor = Color.White.copy(alpha = 0.05f)
+                        ),
+                        shape = RoundedCornerShape(10.dp),
+                        singleLine = true,
+                        modifier = Modifier.weight(1f)
+                    )
+
+                    Spacer(modifier = Modifier.width(8.dp))
+
+                    IconButton(
+                        onClick = {
+                            if (!isConnected) {
+                                Toast.makeText(context, "Please click 'Connect SDK' first to link Spotify App Remote!", Toast.LENGTH_LONG).show()
+                                return@IconButton
+                            }
+                            spotifyAppRemote?.playerApi?.play(playlistUri)
+                        },
+                        modifier = Modifier
+                            .size(40.dp)
+                            .background(Color.White, CircleShape)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.PlayArrow,
+                            contentDescription = "Play URI",
+                            tint = Color.Black,
+                            modifier = Modifier.size(22.dp)
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                // Playlist Preset Quick Selector Chips
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(Color.White.copy(alpha = 0.05f))
+                            .clickable { playlistUri = "spotify:playlist:37i9dQZF1DX2sUQwD7tbmL" }
+                            .padding(horizontal = 8.dp, vertical = 5.dp)
+                    ) {
+                        Text("📻 Indie Feel Good", fontSize = 10.sp, color = Color.White)
+                    }
+
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(Color.White.copy(alpha = 0.05f))
+                            .clickable { playlistUri = "spotify:playlist:37i9dQZF1DX7K31D69s4M1" }
+                            .padding(horizontal = 8.dp, vertical = 5.dp)
+                    ) {
+                        Text("🎹 Serene Piano", fontSize = 10.sp, color = Color.White)
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(10.dp))
+
+            // Code Log Window (Developer Console log)
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(Color.Black)
+                    .border(1.dp, Color.White.copy(alpha = 0.05f), RoundedCornerShape(14.dp))
+                    .padding(8.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "Realtime SDK Monitor",
+                        fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = GoldAccent
+                    )
+                    Text(
+                        text = "CONSOLE",
+                        fontSize = 8.sp,
+                        fontWeight = FontWeight.Black,
+                        color = SoftGrey
+                    )
+                }
+                Spacer(modifier = Modifier.height(6.dp))
+
+                // Scrollable log text output
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(84.dp)
+                ) {
+                    LazyColumn(
+                        modifier = Modifier.fillMaxSize(),
+                        reverseLayout = true
+                    ) {
+                        items(logs.reversed()) { log ->
+                            Text(
+                                text = "• $log",
+                                fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                                fontSize = 9.sp,
+                                color = Color.White.copy(alpha = 0.85f),
+                                modifier = Modifier.padding(vertical = 2.dp)
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
